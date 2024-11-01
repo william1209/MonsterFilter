@@ -61,7 +61,46 @@ def init_model(df_state: Optional[DF] = None, run_df: bool = True, train_mask: b
     return model.to(device=get_device())
 
 
-class Encoder(nn.Module):
+class SKConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernels, reduction=16, group=32, L=32):
+        super().__init__()
+        self.d = max(int(out_channels/reduction), L)
+        self.convs = nn.ModuleList([])
+        for k in kernels:
+            self.convs.append(
+                nn.Sequential(
+                    nn.Conv2d(in_channels, out_channels, kernel_size=k, padding='same', groups=group),
+                    nn.BatchNorm2d(out_channels),
+                    nn.ReLU(inplace=True)
+                )
+            )
+        self.fc = nn.Linear(out_channels, self.d)
+        self.fcs = nn.ModuleList([])
+        for i in range(len(kernels)):
+            self.fcs.append(nn.Linear(self.d, out_channels))
+        self.softmax = nn.Softmax(dim=0)
+        
+    def forward(self, x):
+        batch_size = x.shape[0]
+        feats = [conv(x) for conv in self.convs]
+        feats = torch.stack(feats, dim=0)  # k,b,c,h,w
+        
+        # Fuse
+        U = sum(feats) # b,c,h,w
+        
+        # Split
+        S = U.mean(-1).mean(-1)  # b,c
+        Z = self.fc(S)  # b,d
+        
+        # Select
+        weights = torch.stack([fc(Z) for fc in self.fcs], dim=0)  # k,b,c
+        attention_weights = self.softmax(weights)  # k,b,c
+        
+        # Fuse
+        V = (attention_weights.unsqueeze(-1).unsqueeze(-1) * feats).sum(0)
+        return V
+
+class ModifiedEncoder(nn.Module):
     def __init__(self):
         super().__init__()
         p = ModelParams()
@@ -73,40 +112,32 @@ class Encoder(nn.Module):
         kwargs = {"batch_norm": True, "depthwise": p.conv_depthwise}
         k0 = 1 if k == 1 and p.conv_lookahead == 0 else max(2, k)
         cl = 1 if p.conv_lookahead > 0 else 0
+        
+        # Original first layer
         self.erb_conv0 = convkxf(1, layer_width, k=k0, fstride=1, lookahead=cl, **kwargs)
-        cl = 1 if p.conv_lookahead > 1 else 0
-        self.erb_conv1 = convkxf(
-            layer_width * wf**0, layer_width * wf**1, k=k, lookahead=cl, **kwargs
+        
+        # Replace middle layers with SKNet
+        self.erb_sk1 = SKConv(
+            layer_width * wf**0, 
+            layer_width * wf**1,
+            kernels=[(3,2), (1,2)]
         )
-        cl = 1 if p.conv_lookahead > 2 else 0
-        self.erb_conv2 = convkxf(
-            layer_width * wf**1, layer_width * wf**2, k=k, lookahead=cl, **kwargs
+        
+        self.erb_sk2 = SKConv(
+            layer_width * wf**1,
+            layer_width * wf**2, 
+            kernels=[(2,3), (2,5)]
         )
+        
+        # Original last layer
         self.erb_conv3 = convkxf(layer_width * wf**2, layer_width * wf**2, k=k, fstride=1, **kwargs)
-        self.df_conv0 = convkxf(
-            2, layer_width, fstride=1, k=k0, lookahead=p.conv_lookahead, **kwargs
-        )
+        
+        # Rest of the original initialization
+        self.df_conv0 = convkxf(2, layer_width, fstride=1, k=k0, lookahead=p.conv_lookahead, **kwargs)
         self.df_conv1 = convkxf(layer_width, layer_width * wf**1, k=k, **kwargs)
         self.erb_bins = p.nb_erb
         self.emb_dim = layer_width * p.nb_erb // 4 * wf**2
-        self.df_fc_emb = GroupedLinear(
-            layer_width * p.nb_df // 2, self.emb_dim, groups=p.lin_groups
-        )
-        self.emb_out_dim = p.emb_hidden_dim
-        self.emb_n_layers = p.emb_num_layers
-        self.gru_groups = p.gru_groups
-        self.emb_gru = GroupedGRU(
-            self.emb_dim,
-            self.emb_out_dim,
-            num_layers=p.emb_num_layers,
-            batch_first=False,
-            groups=p.gru_groups,
-            shuffle=p.group_shuffle,
-            add_outputs=True,
-        )
-        self.lsnr_fc = nn.Sequential(nn.Linear(self.emb_out_dim, 1), nn.Sigmoid())
-        self.lsnr_scale = p.lsnr_max - p.lsnr_min
-        self.lsnr_offset = p.lsnr_min
+        self.df_fc_emb = GroupedLinear(layer_width * p.nb_df // 2, self.emb_dim, groups=p.lin_groups)
 
     def forward(
         self, feat_erb: Tensor, feat_spec: Tensor
@@ -116,8 +147,8 @@ class Encoder(nn.Module):
         # spec: [B, 2, T, Fc]
         b, _, t, _ = feat_erb.shape
         e0 = self.erb_conv0(feat_erb)  # [B, C, T, F]
-        e1 = self.erb_conv1(e0)  # [B, C*2, T, F/2]
-        e2 = self.erb_conv2(e1)  # [B, C*4, T, F/4]
+        e1 = self.erb_sk1(e0)  # [B, C*2, T, F/2]
+        e2 = self.erb_sk2(e1)  # [B, C*4, T, F/4]
         e3 = self.erb_conv3(e2)  # [B, C*4, T, F/4]
         c0 = self.df_conv0(feat_spec)  # [B, C, T, Fc]
         c1 = self.df_conv1(c0)  # [B, C*2, T, Fc]
@@ -235,7 +266,7 @@ class DfNet(nn.Module):
         self.freq_bins = p.fft_size // 2 + 1
         self.emb_dim = layer_width * p.nb_erb
         self.erb_bins = p.nb_erb
-        self.enc = Encoder()
+        self.enc = ModifiedEncoder()
         self.erb_dec = ErbDecoder()
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
 
