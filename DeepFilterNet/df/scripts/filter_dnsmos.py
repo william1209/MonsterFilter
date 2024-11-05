@@ -11,9 +11,9 @@ import torch
 import torchaudio as ta
 from torch import Tensor
 
-import df.scripts.dnsmos as dnsmos
-from df.io import resample
-from df.scripts.prepare_data import encode
+import scripts.dnsmos as dnsmos
+from df_io import resample
+from scripts.prepare_data import encode
 
 
 def load_encoded(buffer: np.ndarray, codec: str) -> Tensor:

@@ -9,9 +9,9 @@ import numpy.polynomial.polynomial as poly
 import torch
 from torch import Tensor
 
-from df.io import load_audio
-from df.logger import init_logger, log_metrics
-from df.utils import download_file, get_cache_dir
+from df_io import load_audio
+from logger import init_logger, log_metrics
+from utils import download_file, get_cache_dir
 
 try:
     import requests

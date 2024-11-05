@@ -465,7 +465,7 @@ def compute_ideal_wf(
 
     import libdf
     from df.config import config
-    from df.io import load_audio, save_audio
+    from DeepFilterNet.df.df_io import load_audio, save_audio
     from df.model import ModelParams
 
     torch.set_printoptions(linewidth=140)
@@ -544,7 +544,7 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, enforce_constraints=
 
     import libdf
     from df.config import config
-    from df.io import load_audio, save_audio
+    from DeepFilterNet.df.df_io import load_audio, save_audio
     from df.model import ModelParams
 
     ic.includeContext = True

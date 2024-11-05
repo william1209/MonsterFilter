@@ -6,12 +6,12 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from df.config import Csv, config
-from df.io import resample
-from df.model import ModelParams
-from df.modules import LocalSnrTarget, Mask, erb_fb
-from df.stoi import stoi
-from df.utils import angle, as_complex, get_device
+from config import Csv, config
+from df_io import resample
+from model import ModelParams
+from modules import LocalSnrTarget, Mask, erb_fb
+from stoi import stoi
+from utils import angle, as_complex, get_device
 from libdf import DF
 
 
@@ -75,20 +75,42 @@ class Istft(nn.Module):
 
     def forward(self, input: Tensor):
         # Input shape: [B, * T, F, (2)]
+        device = input.device 
         input = as_complex(input)
         t, f = input.shape[-2:]
         sh = input.shape[:-2]
         # Even though this is not the DF implementation, it numerical sufficiently close.
         # Pad one extra step at the end to get original signal length
+
+        # 對於 MPS 設備，移到 CPU
+        if device.type == 'mps':
+            input = input.cpu()
+            window = self.w_inv.cpu()
+        else:
+            window = self.w_inv
+
+        #input = input.cpu()
+        #self.w_inv = self.w_inv.cpu()
+
+        input_real = torch.view_as_real(input)
+
         out = torch.istft(
             F.pad(input.reshape(-1, t, f).transpose(1, 2), (0, 1)),
             n_fft=self.n_fft_inv,
             hop_length=self.hop_inv,
-            window=self.w_inv,
+            window=window,
             normalized=True,
+            #return_complex=True, # newly added, for new version of torch 
+            #onesided=True
         )
+
         if input.ndim > 2:
             out = out.view(*sh, out.shape[-1])
+        
+        # 如果在 MPS 上，移回設備
+        if device.type == 'mps':
+            out = out.to(device)
+        
         return out
 
 

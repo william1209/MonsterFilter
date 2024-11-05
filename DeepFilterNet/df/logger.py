@@ -10,10 +10,10 @@ import torch
 from loguru import logger
 from torch.types import Number
 
-from df.modules import GroupedLinearEinsum
-from df.utils import get_branch_name, get_commit_hash, get_device, get_host
+from modules import GroupedLinearEinsum
+from utils import get_branch_name, get_commit_hash, get_device, get_host
 
-_logger_initialized = False
+_logger_initialized = True
 WARN_ONCE_NO = logger.level("WARNING").no + 1
 DEPRECATED_NO = logger.level("WARNING").no + 2
 
@@ -181,7 +181,7 @@ def log_model_summary(model: torch.nn.Module, verbose=False, force=False):
         else:
             raise e
 
-    from df.model import ModelParams
+    from model import ModelParams
 
     # Generate input of 1 second audio
     # Necessary inputs are:

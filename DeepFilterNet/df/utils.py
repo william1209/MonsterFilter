@@ -13,15 +13,17 @@ from torch import Tensor
 from torch.autograd import Function
 from torch.types import Number
 
-from df.config import config
-from df.model import ModelParams
+from config import config
+from model import ModelParams
 
 
 def get_device():
-    s = config("DEVICE", default="", section="train")
+    s = config("DEVICE", default="mps", section="train")
     if s == "":
         if torch.cuda.is_available():
             DEVICE = torch.device("cuda:0")
+        elif torch.backends.mps.is_available():
+            DEVICE = torch.device("mps")
         else:
             DEVICE = torch.device("cpu")
     else:

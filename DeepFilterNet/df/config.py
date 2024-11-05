@@ -38,6 +38,18 @@ class DfParams:
         # - `output`, which pads the output spectrogram corresponding to `df_lookahead`
         self.pad_mode: str = config("PAD_MODE", default="input", section="DF")
 
+        # SKNet related parameters
+        self.use_sknet: bool = config("USE_SKNET", cast=bool, default=True, section="deepfilternet")
+        self.sk_channels: int = config("SK_CHANNELS", cast=int, default=16, section="deepfilternet")
+        self.sk_reduction: int = config("SK_REDUCTION", cast=int, default=16, section="deepfilternet")
+        self.sk_groups: int = config("SK_GROUPS", cast=int, default=32, section="deepfilternet")
+        self.sk_kernels: List[Tuple[int, int]] = config(
+            "SK_KERNELS",
+            cast=Csv(tuple),  # Using Csv to parse tuple lists
+            default=[3,5],
+            section="deepfilternet"
+        )
+
 
 class Config:
     """Adopted from python-decouple"""
@@ -56,6 +68,7 @@ class Config:
         self.allow_defaults = allow_defaults
         if self.parser is not None and not allow_reload:
             raise ValueError("Config already loaded")
+        logger.debug(f"Loading configuration from {path}")
         self.parser = ConfigParser()
         self.path = path
         if path is not None and os.path.isfile(path):

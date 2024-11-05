@@ -16,10 +16,10 @@ import torch
 from loguru import logger
 from tqdm import tqdm
 
-from df.io import load_audio, resample, save_audio
-from df.logger import init_logger, log_metrics
-from df.scripts.dnsmos import get_ort_session
-from df.utils import download_file, get_cache_dir
+from df_io import load_audio, resample, save_audio
+from logger import init_logger, log_metrics
+from scripts.dnsmos import get_ort_session
+from utils import download_file, get_cache_dir
 
 SAMPLING_RATE = 16000
 INPUT_LENGTH = 9.01

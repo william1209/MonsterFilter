@@ -10,8 +10,8 @@ from torch.nn import init
 from torch.nn.parameter import Parameter
 from typing_extensions import Final
 
-from df.model import ModelParams
-from df.utils import as_complex, as_real, get_device, get_norm_alpha
+from model import ModelParams
+from utils import as_complex, as_real, get_device, get_norm_alpha
 from libdf import unit_norm_init
 
 
@@ -1007,3 +1007,139 @@ def test_dfop():
     dfop.set_forward("real_hidden_state_loop")
     out6 = dfop(spec, coefs, alpha)
     torch.testing.assert_allclose(out1, out6)
+
+
+class SKConv(nn.Module):
+    """Selective Kernel Convolution module"""
+    in_channels: Final[int]
+    out_channels: Final[int]
+    reduction: Final[int]
+    group: Final[int]
+    L: Final[int]
+    
+    '''
+    def __init__(
+        self, 
+        in_channels: int, 
+        out_channels: int, 
+        kernels: List[Tuple[int, int]], 
+        stride: int = 1, 
+        reduction: int = 16, 
+        group: int = 32, 
+        L: int = 32
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.reduction = reduction
+        self.group = group
+        self.L = L
+        self.d = max(int(out_channels/reduction), L)
+        
+        self.convs = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(
+                    in_channels, 
+                    out_channels, 
+                    kernel_size=k, 
+                    stride=stride, 
+                    padding='same', 
+                    groups=group
+                ),
+                nn.GroupNorm(8, out_channels),
+                nn.ReLU(inplace=True)
+            ) for k in kernels
+        ])
+        
+        self.fc = nn.Linear(out_channels, self.d)
+        self.fcs = nn.ModuleList([
+            nn.Linear(self.d, out_channels) 
+            for _ in range(len(kernels))
+        ])
+        self.softmax = nn.Softmax(dim=0)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+    '''
+
+    def __init__(
+        self, 
+        in_channels: int,
+        out_channels: int,
+        stride: Tuple[int, int] = (1, 1),
+        group: int = 1,
+        reduction: int = 16,
+        kernels: List[int] = [3, 5]
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.stride = stride
+        self.group = group
+        self.reduction = reduction
+        self.L = len(kernels)
+        
+        # 計算每個卷積核的 padding，使輸出大小一致
+        '''
+        self.convs = nn.ModuleList([
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=k,
+                stride=stride,
+                padding=(0,k//2),  # 動態計算 padding
+                groups=group,
+                padding_mode='reflect'
+            ) for k in kernels
+        ])
+        '''
+        # 修改 padding 以實現因果性
+        self.convs = nn.ModuleList([
+            nn.Sequential(
+                # 只在時間維度上進行左側填充
+                nn.ConstantPad2d((0, 0, k-1, 0), 0),  # (left, right, top, bottom)
+                nn.Conv2d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=k,
+                    stride=stride,
+                    padding=(0, k//2),  # 只在頻率維度上使用 'same' padding
+                    groups=group,
+                    padding_mode='reflect'
+                )
+            ) for k in kernels
+        ])
+
+
+        d = max(in_channels // reduction, 32)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(out_channels, d)
+        self.fcs = nn.ModuleList([
+            nn.Linear(d, out_channels) for _ in range(self.L)
+        ])
+        self.softmax = nn.Softmax(dim=0)
+    def forward(self, x: Tensor) -> Tensor:
+        batch_size = x.shape[0]
+        feats = [conv(x) for conv in self.convs]
+        feats = torch.stack(feats, dim=0)  # k,b,c,h,w
+        
+        # Fuse
+        U = sum(feats)  # b,c,h,w
+        
+        # Split
+        S = self.avg_pool(U).squeeze(-1).squeeze(-1)  # b,c
+        Z = self.fc(S)  # b,d
+        
+        # Select
+        weights = torch.stack([fc(Z) for fc in self.fcs], dim=0)  # k,b,c
+        attention_weights = self.softmax(weights)  # k,b,c
+        
+        # Fuse
+        V = (attention_weights.unsqueeze(-1).unsqueeze(-1) * feats).sum(0)
+        return V
+
+    def __repr__(self):
+        return (f"{self.__class__.__name__}("
+                f"in_channels={self.in_channels}, "
+                f"out_channels={self.out_channels}, "
+                f"reduction={self.reduction}, "
+                f"group={self.group}, "
+                f"L={self.L})")

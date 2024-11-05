@@ -101,24 +101,45 @@ class Encoder(nn.Module):
         p = ModelParams()
         assert p.nb_erb % 4 == 0, "erb_bins should be divisible by 4"
 
+        # 第一層保持不變
         self.erb_conv0 = Conv2dNormAct(
             1, p.conv_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
         )
-        conv_layer = partial(
-            Conv2dNormAct,
-            in_ch=p.conv_ch,
-            out_ch=p.conv_ch,
-            kernel_size=p.conv_kernel,
-            bias=False,
-            separable=True,
+
+        # 使用 SKNet 替換中間的卷積層
+        self.erb_conv1 = SKConv(
+            p.conv_ch,
+            p.conv_ch,
+            stride=(1, 2),
+            groups=p.sk_groups,
+            reduction=p.sk_reduction,
+            min_width=p.sk_min_width,
+            kernels=p.sk_kernels
         )
-        self.erb_conv1 = conv_layer(fstride=2)
-        self.erb_conv2 = conv_layer(fstride=2)
-        self.erb_conv3 = conv_layer(fstride=1)
+        self.erb_conv2 = SKConv(
+            p.conv_ch,
+            p.conv_ch,
+            stride=(1, 2),
+            groups=p.sk_groups,
+            reduction=p.sk_reduction,
+            min_width=p.sk_min_width,
+            kernels=p.sk_kernels
+        )
+
+        # 最後一層保持不變
+        self.erb_conv3 = Conv2dNormAct(
+            p.conv_ch, p.conv_ch, kernel_size=p.conv_kernel, bias=False, separable=True
+        )
+
+        # DF 相關層保持不變
         self.df_conv0 = Conv2dNormAct(
             2, p.conv_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
         )
-        self.df_conv1 = conv_layer(fstride=2)
+        self.df_conv1 = Conv2dNormAct(
+            p.conv_ch, p.conv_ch, kernel_size=p.conv_kernel, bias=False, 
+            separable=True, fstride=2
+        )
+
         self.erb_bins = p.nb_erb
         self.emb_in_dim = p.conv_ch * p.nb_erb // 4
         self.emb_out_dim = p.emb_hidden_dim

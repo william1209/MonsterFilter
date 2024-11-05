@@ -16,8 +16,8 @@ from loguru import logger
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
-from df.io import resample
-from df.logger import init_logger
+from df_io import resample
+from logger import init_logger
 
 
 def write_to_h5(

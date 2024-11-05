@@ -5,10 +5,10 @@ from typing import List, Tuple
 import numpy as np
 from torch import Tensor
 
-from df.io import load_audio
-from df.logger import init_logger, log_metrics
-from df.scripts.dnsmos import SR, get_ort_session, isclose
-from df.utils import download_file, get_cache_dir
+from df_io import load_audio
+from logger import init_logger, log_metrics
+from scripts.dnsmos import SR, get_ort_session, isclose
+from utils import download_file, get_cache_dir
 
 URL_ONNX = "https://github.com/microsoft/DNS-Challenge/raw/82f1b17e7776a43eee395d0f45bae8abb700ad00/DNSMOS/DNSMOS/"
 # Coefficients for polynomial fitting

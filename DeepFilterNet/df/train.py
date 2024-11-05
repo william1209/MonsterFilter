@@ -15,14 +15,14 @@ from torch.autograd.grad_mode import set_grad_enabled
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.types import Number
 
-from df.checkpoint import check_patience, load_model, read_cp, write_cp
-from df.config import Csv, config
-from df.logger import init_logger, log_metrics, log_model_summary
-from df.loss import Istft, Loss
-from df.lr import cosine_scheduler
-from df.model import ModelParams
-from df.modules import get_device
-from df.utils import (
+from checkpoint import check_patience, load_model, read_cp, write_cp
+from config import Csv, config
+from logger import init_logger, log_metrics, log_model_summary
+from loss import Istft, Loss
+from lr import cosine_scheduler
+from model import ModelParams
+from modules import get_device
+from utils import (
     as_complex,
     as_real,
     check_finite_module,
@@ -44,9 +44,15 @@ MAX_NANS = 50
 
 
 @logger.catch
-def main():
+def main(args):
+    import time
+    current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    logger.info(f"Training started at: {current_time}")
+    logger.info(f"Using train.py from: {__file__}")
+
     global should_stop, debug, state, log_timings
 
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("data_config_file", type=str, help="Path to a dataset config file.")
     parser.add_argument(
@@ -72,6 +78,29 @@ def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--no-debug", action="store_false", dest="debug")
     args = parser.parse_args()
+    """
+    config_file = os.path.join(args.base_dir, "config.ini")
+    #config.load(config_file)
+
+    if config.parser is None:
+        config.load(config_file)
+    elif config.path != config_file:
+        config.load(config_file, allow_reload=True)
+    else:
+        logger.debug("Configuration already loaded")
+
+    if args is None:  # 只有在沒有傳入參數時才解析命令行
+        parser = argparse.ArgumentParser()
+        parser.add_argument("data_config_file", type=str)
+        parser.add_argument("data_dir", type=str)
+        parser.add_argument("base_dir", type=str)
+        parser.add_argument("--host-batchsize-config", "-b", type=str, default=None)
+        parser.add_argument("--no-resume", action="store_false", dest="resume")
+        parser.add_argument("--log-level", type=str, default=None)
+        parser.add_argument("--debug", action="store_true")
+        parser.add_argument("--no-debug", action="store_false", dest="debug")
+        args = parser.parse_args()
+
     if not os.path.isfile(args.data_config_file):
         raise FileNotFoundError("Dataset config not found at {}".format(args.data_config_file))
     if not os.path.isdir(args.data_dir):
@@ -87,11 +116,12 @@ def main():
     else:
         log_level = "DEBUG" if debug else "INFO"
     init_logger(file=os.path.join(args.base_dir, "train.log"), level=log_level, model=args.base_dir)
-    config_file = os.path.join(args.base_dir, "config.ini")
-    config.load(config_file)
+    #config_file = os.path.join(args.base_dir, "config.ini")
+    #config.load(config_file)
     seed = config("SEED", 42, int, section="train")
     check_manual_seed(seed)
-    logger.info("Running on device {}".format(get_device()))
+    
+    logger.info("Running on device fuckkkkkkkk{}".format(get_device()))
 
     # Maybe update batch size
     if args.host_batchsize_config is not None:
@@ -298,6 +328,7 @@ def main():
             logger.info("Stopping training due to timeout")
             exit(0)
         losses.reset_summaries()
+    '''
     model, epoch = load_model(
         checkpoint_dir,
         state,
@@ -306,6 +337,7 @@ def main():
         mask_only=mask_only,
         train_df_only=train_df_only,
     )
+    '''
     test_loss = run_epoch(
         model=model,
         epoch=epoch,

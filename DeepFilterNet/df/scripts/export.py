@@ -14,7 +14,7 @@ import torch
 from loguru import logger
 from torch import Tensor
 
-from df.enhance import (
+from enhance import (
     ModelParams,
     df_features,
     enhance,
@@ -22,7 +22,7 @@ from df.enhance import (
     init_df,
     setup_df_argument_parser,
 )
-from df.io import get_test_sample, save_audio
+from df_io import get_test_sample, save_audio
 from libdf import DF
 
 
