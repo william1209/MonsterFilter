@@ -9,6 +9,10 @@ export/
 assets/valid_cache*
 DeepFilterNet/poetry.lock
 .vscode
+.DS_store
+
+# Datasets
+DeepfilterNet/data
 
 ### Rust gitignore ###
 

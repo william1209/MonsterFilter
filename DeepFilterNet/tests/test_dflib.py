@@ -8,11 +8,11 @@ from icecream import ic
 from torch import Tensor
 
 import libdf
-from df.config import config
-from df.io import get_test_sample, save_audio
-from df.model import ModelParams
-from df.utils import _calculate_norm_alpha
-from df.visualization import spec_figure
+from config import config
+from df_io import get_test_sample, save_audio
+from model import ModelParams
+from utils import _calculate_norm_alpha
+from visualization import spec_figure
 from libdf import DF
 from libdfdata import PytorchDataLoader as DataLoader
 
