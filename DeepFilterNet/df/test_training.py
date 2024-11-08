@@ -36,15 +36,15 @@ def create_test_data():
     # 生成訓練配置
     train_config = """[train]
 seed = 42
-device = 
+device = mps
 model = deepfilternet
 mask_only = False
 df_only = False
 jit = False
-batch_size = 64
+batch_size = 16
 batch_size_eval = 0
 overfit = False
-num_workers = 8
+num_workers = 4
 max_sample_len_s = 5.0
 num_prefetch_batches = 32
 global_ds_sampling_f = 1.0
@@ -79,12 +79,17 @@ convt_depthwise = True
 conv_kernel = 1,3
 convt_kernel = 1,3
 conv_kernel_inp = 3,3
-emb_hidden_dim = 256
-emb_num_layers = 2
-emb_gru_skip_enc = none
-emb_gru_skip = none
+emb_hidden_dim = 256     
+emb_num_layers = 3       
+
+# DenseNet 參數
+growth_rate = 12
+dense_blocks = 4
+dense_layers = 4
+transition_compression = 0.5
+
+# 其他重要參數
 df_hidden_dim = 256
-df_gru_skip = none
 df_pathway_kernel_size_t = 1
 enc_concat = False
 df_num_layers = 3
@@ -98,8 +103,6 @@ conv_k_enc = 2
 conv_k_dec = 1
 conv_width_factor = 1
 conv_dec_mode = transposed
-gru_groups = 1
-group_shuffle = True
 dfop_method = real_unfold
 
 # SKNet 配置
@@ -216,8 +219,8 @@ if __name__ == "__main__":
     logger.add("test_models/train.log", level="DEBUG")
     
     # 添加版本檢查
-    logger.info(f"Current df.train version: {train.__file__}")
-    logger.info(f"Current df.model version: {model.__file__}")
+    logger.info(f"Current train version: {train.__file__}")
+    logger.info(f"Current model version: {model.__file__}")
 
     # 檢查 Rust 組件
     import libdf

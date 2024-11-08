@@ -1143,3 +1143,142 @@ class SKConv(nn.Module):
                 f"reduction={self.reduction}, "
                 f"group={self.group}, "
                 f"L={self.L})")
+
+
+class DenseBlock(nn.Module):
+    def __init__(self, layers=None, in_channels=None, growth_rate=None, num_layers=None, causal=True, dropout_rate=0.1):
+        super().__init__()
+        if layers is not None:
+            # 直接使用提供的層
+            self.layers = nn.ModuleList(layers)
+        else:
+            # 使用參數創建層
+            assert all(x is not None for x in [in_channels, growth_rate, num_layers]), \
+                "Must provide either layers or (in_channels, growth_rate, num_layers)"
+            self.layers = nn.ModuleList()
+            for i in range(num_layers):
+                self.layers.append(
+                    self._make_layer(
+                        in_channels + i * growth_rate, 
+                        growth_rate, 
+                        causal,
+                        dropout_rate
+                    )
+                )
+
+    def _make_layer(self, in_channels, growth_rate, causal, dropout_rate):
+        if causal:
+            return nn.Sequential(
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True),
+                nn.ConstantPad2d((0, 0, 2, 0), 0),  # 因果填充
+                nn.Conv2d(
+                    in_channels, 
+                    growth_rate, 
+                    kernel_size=3,
+                    padding=(0, 1),  # 只在頻率維度上填充
+                    bias=False
+                ),
+                nn.Dropout(dropout_rate)
+            )
+        else:
+            return nn.Sequential(
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(
+                    in_channels,
+                    growth_rate,
+                    kernel_size=3,
+                    padding=1,
+                    bias=False
+                ),
+                nn.Dropout(dropout_rate)
+            )
+
+    def forward(self, x):
+        features = [x]
+        for layer in self.layers:
+            new_feature = layer(torch.cat(features, 1))
+            features.append(new_feature)
+        return torch.cat(features, 1)
+
+class DenseEncoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_layers=3, growth_rate=32):
+        super().__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        
+        # 初始特徵提取
+        self.init_conv = nn.Sequential(
+            nn.BatchNorm2d(input_dim),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(input_dim, growth_rate * 2, kernel_size=(3, 1), padding=(1, 0), bias=False)
+        )
+        
+        # Dense blocks
+        self.blocks = nn.ModuleList()
+        current_channels = growth_rate * 2
+        
+        for i in range(num_layers):
+            # Dense block
+            block = self._make_dense_block(
+                current_channels,
+                growth_rate,
+                num_layers=4,
+                dropout_rate=0.1  # 添加 dropout
+            )
+            self.blocks.append(block)
+            current_channels += growth_rate * 4
+            
+            # Transition layer
+            if i < num_layers - 1:
+                trans = nn.Sequential(
+                    nn.BatchNorm2d(current_channels),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(current_channels, current_channels // 2, 1),
+                    nn.Dropout(0.1)  # 添加 dropout
+                )
+                self.blocks.append(trans)
+                current_channels = current_channels // 2
+        
+        # 最終投影
+        self.final_layers = nn.Sequential(
+            nn.BatchNorm2d(current_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(current_channels, hidden_dim, 1),
+            nn.Dropout(0.1)  # 添加 dropout
+        )
+        
+        # 添加殘差連接
+        self.residual_conv = nn.Conv2d(input_dim, hidden_dim, 1) if input_dim != hidden_dim else nn.Identity()
+        
+    def _make_dense_block(self, in_channels, growth_rate, num_layers, dropout_rate=0.1):
+        return DenseBlock(
+            in_channels=in_channels,
+            growth_rate=growth_rate,
+            num_layers=num_layers,
+            causal=True,
+            dropout_rate=dropout_rate
+        )
+        
+    def forward(self, x):
+        # 保存輸入用於殘差連接
+        identity = self.residual_conv(x)
+        
+        # 初始特徵提取
+        x = self.init_conv(x)
+        
+        # 通過 Dense blocks
+        for block in self.blocks:
+            x = block(x)
+        
+        # 最終處理
+        x = self.final_layers(x)
+        
+        # 添加殘差連接
+        x = x + identity
+        
+        # 重塑為所需形狀
+        x = x.squeeze(-1).transpose(1, 2)
+        
+        return x

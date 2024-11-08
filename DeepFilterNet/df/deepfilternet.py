@@ -20,6 +20,7 @@ from modules import (
     erb_fb,
     get_device,
     SKConv,
+    DenseEncoder,
 )
 from libdf import DF
 
@@ -64,9 +65,11 @@ class ModelParams(DfParams):
         self.enc_concat: bool = config("ENC_CONCAT", cast=bool, default=False, section=self.section)
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
         self.df_n_iter: int = config("DF_N_ITER", cast=int, default=2, section=self.section)
+        
         self.gru_type: str = config("GRU_TYPE", default="grouped", section=self.section)
         self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
+        
         self.group_shuffle: bool = config(
             "GROUP_SHUFFLE", cast=bool, default=True, section=self.section
         )
@@ -75,7 +78,7 @@ class ModelParams(DfParams):
         )
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
-
+        # SKNet 參數
         self.sk_groups: int = config(
             "SK_GROUPS", cast=int, default=1, section=self.section
         )
@@ -90,6 +93,20 @@ class ModelParams(DfParams):
             cast=Csv(int), 
             default=(3, 5), 
             section=self.section  # type: ignore
+        )
+
+        # DenseNet 參數
+        self.growth_rate: int = config(
+            "GROWTH_RATE", cast=int, default=12, section=self.section
+        )
+        self.dense_blocks: int = config(
+            "DENSE_BLOCKS", cast=int, default=4, section=self.section
+        )
+        self.dense_layers: int = config(
+            "DENSE_LAYERS", cast=int, default=4, section=self.section
+        )
+        self.transition_compression: float = config(
+            "TRANSITION_COMPRESSION", cast=float, default=0.5, section=self.section
         )
 
 
@@ -120,19 +137,21 @@ class Encoder(nn.Module):
         p = ModelParams()
         assert p.nb_erb % 4 == 0, "erb_bins should be divisible by 4"
 
-        # 第一層保持不變
+        # 定義維度
+        self.erb_bins = p.nb_erb
+        self.emb_in_dim = p.conv_ch * p.nb_erb // 4
+        self.emb_out_dim = p.emb_hidden_dim
+
+        # ERB pathway
         self.erb_conv0 = Conv2dNormAct(
             1, p.conv_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
         )
-
-        # 使用 SKNet 替換中間的卷積層
         self.erb_conv1 = SKConv(
             p.conv_ch,
             p.conv_ch,
             stride=(1, 2),
             group=p.sk_groups,
             reduction=p.sk_reduction,
-            #min_width=p.sk_min_width,
             kernels=p.sk_kernels,
         )
         self.erb_conv2 = SKConv(
@@ -141,63 +160,41 @@ class Encoder(nn.Module):
             stride=(1, 2),
             group=p.sk_groups,
             reduction=p.sk_reduction,
-            #min_width=p.sk_min_width,
             kernels=p.sk_kernels,
         )
-
-        # 最後一層保持不變
         self.erb_conv3 = Conv2dNormAct(
             p.conv_ch, p.conv_ch, kernel_size=p.conv_kernel, bias=False, separable=True
         )
 
-        # DF 相關層保持不變
+        # DF pathway
         self.df_conv0 = Conv2dNormAct(
             2, p.conv_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
         )
         self.df_conv1 = Conv2dNormAct(
-            p.conv_ch, p.conv_ch, kernel_size=p.conv_kernel, bias=False, 
-            separable=True, fstride=2
+            p.conv_ch, p.conv_ch, kernel_size=p.conv_kernel, bias=False, separable=True
+        )
+        
+        # Linear layers
+        self.df_fc_emb = GroupedLinear(
+            p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.lin_groups
         )
 
-        self.erb_bins = p.nb_erb
-        self.emb_in_dim = p.conv_ch * p.nb_erb // 4
-        self.emb_out_dim = p.emb_hidden_dim
-        if p.gru_type == "grouped":
-            self.df_fc_emb = GroupedLinear(
-                p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.lin_groups
-            )
-        else:
-            df_fc_emb = GroupedLinearEinsum(
-                p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.lin_groups
-            )
-            self.df_fc_emb = nn.Sequential(df_fc_emb, nn.ReLU(inplace=True))
+        # 特徵組合
         if p.enc_concat:
             self.emb_in_dim *= 2
             self.combine = Concat()
         else:
             self.combine = Add()
-        self.emb_out_dim = p.emb_hidden_dim
-        self.emb_n_layers = p.emb_num_layers
-        assert p.gru_type in ("grouped", "squeeze"), f"But got {p.gru_type}"
-        if p.gru_type == "grouped":
-            self.emb_gru = GroupedGRU(
-                self.emb_in_dim,
-                self.emb_out_dim,
-                num_layers=1,
-                batch_first=True,
-                groups=p.gru_groups,
-                shuffle=p.group_shuffle,
-                add_outputs=True,
-            )
-        else:
-            self.emb_gru = SqueezedGRU(
-                self.emb_in_dim,
-                self.emb_out_dim,
-                num_layers=1,
-                batch_first=True,
-                linear_groups=p.lin_groups,
-                linear_act_layer=partial(nn.ReLU, inplace=True),
-            )
+
+        # DenseEncoder 替換 GRU
+        self.dense_encoder = DenseEncoder(
+            input_dim=self.emb_in_dim,
+            hidden_dim=self.emb_out_dim,
+            num_layers=p.emb_num_layers,
+            growth_rate=p.growth_rate
+        )
+
+        # LSNR 相關
         self.lsnr_fc = nn.Sequential(nn.Linear(self.emb_out_dim, 1), nn.Sigmoid())
         self.lsnr_scale = p.lsnr_max - p.lsnr_min
         self.lsnr_offset = p.lsnr_min
@@ -205,22 +202,37 @@ class Encoder(nn.Module):
     def forward(
         self, feat_erb: Tensor, feat_spec: Tensor
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
-        # Encodes erb; erb should be in dB scale + normalized; Fe are number of erb bands.
-        # erb: [B, 1, T, Fe]
-        # spec: [B, 2, T, Fc]
-        # b, _, t, _ = feat_erb.shape
+        
+        b, _, t, _ = feat_erb.shape 
+        # ERB pathway
         e0 = self.erb_conv0(feat_erb)  # [B, C, T, F]
-        e1 = self.erb_conv1(e0)  # [B, C*2, T, F/2]
-        e2 = self.erb_conv2(e1)  # [B, C*4, T, F/4]
-        e3 = self.erb_conv3(e2)  # [B, C*4, T, F/4]
+        e1 = self.erb_conv1(e0)        # [B, C*2, T, F/2]
+        e2 = self.erb_conv2(e1)        # [B, C*4, T, F/4]
+        e3 = self.erb_conv3(e2)        # [B, C*4, T, F/4]
+
+        # DF pathway
         c0 = self.df_conv0(feat_spec)  # [B, C, T, Fc]
-        c1 = self.df_conv1(c0)  # [B, C*2, T, Fc]
-        cemb = c1.permute(0, 2, 3, 1).flatten(2)  # [B, T, -1]
-        cemb = self.df_fc_emb(cemb)  # [T, B, C * F/4]
-        emb = e3.permute(0, 2, 3, 1).flatten(2)  # [B, T, C * F/4]
-        emb = self.combine(emb, cemb)
-        emb, _ = self.emb_gru(emb)  # [B, T, -1]
+        c1 = self.df_conv1(c0)         # [B, C*2, T, Fc]
+
+        # 處理 DF 特徵
+        cemb = c1.permute(2, 0, 1, 3).reshape(t, b, -1)  # [T, B, C * Fc/4]
+        cemb = self.df_fc_emb(cemb)                      # [T, B, C * F/4]
+
+        # 處理 ERB 特徵
+        emb = e3.permute(2, 0, 1, 3).reshape(t, b, -1)   # [T, B, C * F/4]
+        
+        # 組合特徵
+        emb = self.combine(emb, cemb)                    # [T, B, C * F/4]
+        
+        # 使用 DenseEncoder
+        emb = emb.transpose(0, 1)                        # [B, T, C * F/4]
+        emb = emb.unsqueeze(-1)                         # [B, T, C * F/4, 1]
+        emb = emb.permute(0, 2, 1, 3)                   # [B, C * F/4, T, 1]
+        emb = self.dense_encoder(emb)                    # [B, T, hidden_dim]
+        
+        # 計算 LSNR
         lsnr = self.lsnr_fc(emb) * self.lsnr_scale + self.lsnr_offset
+
         return e0, e1, e2, e3, emb, c0, lsnr
 
 
