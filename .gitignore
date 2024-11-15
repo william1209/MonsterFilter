@@ -10,6 +10,9 @@ assets/valid_cache*
 DeepFilterNet/poetry.lock
 .vscode
 .DS_Store
+.cursorignore
+._LICENSE
+._.DS_Store
 
 # DATASETS
 DeepFilterNet/df/data
