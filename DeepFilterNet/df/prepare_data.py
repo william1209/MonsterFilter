@@ -7,8 +7,6 @@ import warnings
 from multiprocessing import Pool
 from tempfile import NamedTemporaryFile
 from typing import List, Optional
-import sys
-
 
 import h5py as h5
 import numpy as np
@@ -18,15 +16,10 @@ from loguru import logger
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
 from df_io import resample
 from logger import init_logger
 
-def _check_file(file: str):
-    file = os.path.join(working_dir, file.strip())
-    if not os.path.isfile(file):
-        raise FileNotFoundError(f"file {file} not found")
-    return file
 
 
 def write_to_h5(
@@ -176,7 +169,14 @@ def encode(x: Tensor, sr: int, codec: str, compression: Optional[int] = None) ->
     return x
 
 
-if __name__ == "__main__":
+def _check_file(args):
+    file, working_dir = args
+    file = os.path.join(working_dir, file.strip())
+    if not os.path.isfile(file):
+        raise FileNotFoundError(f"file {file} not found")
+    return file
+
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("type", type=str, help="Either 'speech', 'noise' or 'noisy'.")
     parser.add_argument(
@@ -228,18 +228,18 @@ if __name__ == "__main__":
     with open(args.audio_files) as f:
         working_dir = os.path.dirname(args.audio_files)
         data[args.type]["working_dir"] = working_dir
-        logger.info(f"Using speech working directory {working_dir}")
-
-        def _check_file(file: str):
-            file = os.path.join(working_dir, file.strip())
-            if not os.path.isfile(file):
-                raise FileNotFoundError(f"file {file} not found")
-            return file
-
-        with Pool(max(args.num_workers, 1)) as p:
-            res = p.imap(_check_file, f, 100)
-            data[args.type]["files"] = list(res)
-        logger.info("Checking all audio files complete")
+        logger.info(f"Using working directory {working_dir}")
+        
+        file_args = [(line, working_dir) for line in f]
+        
+        if args.num_workers > 0:
+            with Pool(args.num_workers) as p:
+                res = p.map(_check_file, file_args)
+                data[args.type]["files"] = list(res)
+        else:
+            # 如果 num_workers <= 0，使用單進程處理
+            data[args.type]["files"] = [_check_file(arg) for arg in file_args]
+    
     write_to_h5(
         file_name=args.hdf5_db,
         data=data,
@@ -251,3 +251,6 @@ if __name__ == "__main__":
         compression=args.compression,
         num_workers=args.num_workers,
     )
+
+if __name__ == "__main__":
+    main()

@@ -44,7 +44,7 @@ MAX_NANS = 50
 
 
 @logger.catch
-def main(args):
+def main():
     import time
     current_time = time.strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"Training started at: {current_time}")
@@ -52,7 +52,7 @@ def main(args):
 
     global should_stop, debug, state, log_timings
 
-    """
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("data_config_file", type=str, help="Path to a dataset config file.")
     parser.add_argument(
@@ -78,7 +78,7 @@ def main(args):
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--no-debug", action="store_false", dest="debug")
     args = parser.parse_args()
-    """
+    
     config_file = os.path.join(args.base_dir, "config.ini")
     #config.load(config_file)
 

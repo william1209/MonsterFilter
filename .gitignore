@@ -12,7 +12,11 @@ DeepFilterNet/poetry.lock
 .DS_Store
 
 # DATASETS
-DeepFilterNet/data
+DeepFilterNet/df/data
+DeepFilterNet/df/test_data
+DeepFilterNet/df/models
+DeepFilterNet/df/test_models
+
 
 
 ### Rust gitignore ###
